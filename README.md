@@ -24,3 +24,6 @@ for k = 1 : num
     rectangle('Position', stats(k).BoundingBox, 'EdgeColor', 'r', 'LineWidth', 2);
 end
 hold off;
+
+# Note
+I changed the idea into a generic one for simplicity (specifically noise removal)
