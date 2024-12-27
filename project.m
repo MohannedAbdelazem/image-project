@@ -234,6 +234,7 @@ function output_image = alpha_trimmed_mean_filter(input_image, alpha)
     output_image = uint8(output_image);
 end
 
+
 function output_image = non_local_means_filter(input_image, search_window, patch_size, h)
     input_image = double(input_image);
     [rows, cols, channels] = size(input_image);
@@ -290,56 +291,100 @@ function output_image = non_local_means_filter(input_image, search_window, patch
     output_image = uint8(output_image);
 end
 
-function output_image = tv_denoising(input_image, lambda, num_iterations)
+
+function output_image = kalman_filter(input_image, process_noise, measurement_noise, search_window)
     input_image = double(input_image);
     [rows, cols, channels] = size(input_image);
 
-    % Initialize the output image (starting with the noisy image)
-    output_image = input_image;
+    % Initialize variables
+    estimate = input_image;  % Initial estimate
+    error_covariance = ones(rows, cols, channels);  % Initial error covariance
+    half_window = floor(search_window / 2);
 
-    % Define the gradient operators for the image (forward differences)
-    dx = [1, -1];  % Horizontal gradient
-    dy = [1; -1];  % Vertical gradient
+    % Convergence tolerance
+    tolerance = 1e-3;  
+    max_iters = 10;
 
-    % Iterate for a number of iterations to minimize the Total Variation
-    for iter = 1:num_iterations
+    for iter = 1:max_iters
+        previous_estimate = estimate;  % Store previous estimate for convergence check
+
         for c = 1:channels
-            % Compute the gradients in the x and y directions
-            grad_x = conv2(output_image(:, :, c), dx, 'same');
-            grad_y = conv2(output_image(:, :, c), dy, 'same');
+            for i = 1:rows
+                for j = 1:cols
+                    % Define the search window bounds
+                    row_min = max(1, i - half_window);
+                    row_max = min(rows, i + half_window);
+                    col_min = max(1, j - half_window);
+                    col_max = min(cols, j + half_window);
 
-            % Compute the magnitude of the gradient (the total variation)
-            grad_magnitude = sqrt(grad_x.^2 + grad_y.^2);
+                    % Aggregate measurements within the search window
+                    neighboring_values = input_image(row_min:row_max, col_min:col_max, c);
+                    measured_value = mean(neighboring_values(:));  % Average over the window
 
-            % Update the image by minimizing the Total Variation (gradient descent step)
-            output_image(:, :, c) = output_image(:, :, c) - lambda * (grad_x + grad_y) ./ (grad_magnitude + eps);
+                    % Prediction
+                    predicted_estimate = estimate(i, j, c);
+                    predicted_covariance = error_covariance(i, j, c) + process_noise;
+
+                    % Kalman Gain
+                    kalman_gain = predicted_covariance / (predicted_covariance + measurement_noise);
+
+                    % Update estimate and error covariance
+                    estimate(i, j, c) = predicted_estimate + kalman_gain * (measured_value - predicted_estimate);
+                    error_covariance(i, j, c) = (1 - kalman_gain) * predicted_covariance;
+                end
+            end
+        end
+
+        % Check for convergence
+        if max(abs(estimate(:) - previous_estimate(:))) < tolerance
+            break;
+        end
+    end
+
+    % Clip and convert to uint8
+    output_image = uint8(min(max(estimate, 0), 255));
+end
+
+function output_image = tvd_filter(input_image, lambda, num_iterations)
+    input_image = double(input_image);
+    [rows, cols, channels] = size(input_image);
+
+    % Initialize variables
+    output_image = input_image;
+    gradient_x = zeros(rows, cols, channels);  % x-gradient of the image
+    gradient_y = zeros(rows, cols, channels);  % y-gradient of the image
+    norm_gradient = zeros(rows, cols, channels); % To store the norm of gradients
+
+    % Perform iterations to reduce the total variation
+    for iter = 1:num_iterations
+        % Compute the gradients for each channel separately
+        for c = 1:channels
+            % Calculate the x-gradient
+            gradient_x(2:end, :, c) = output_image(2:end, :, c) - output_image(1:end-1, :, c);  % x-gradient for channel c
+
+            % Calculate the y-gradient
+            gradient_y(:, 2:end, c) = output_image(:, 2:end, c) - output_image(:, 1:end-1, c);  % y-gradient for channel c
+        end
+
+        % Compute the norm of the gradient for each channel
+        norm_gradient = sqrt(gradient_x.^2 + gradient_y.^2);
+
+        % Update the image by reducing the total variation
+        for c = 1:channels
+            for i = 1:rows
+                for j = 1:cols
+                    if norm_gradient(i,j,c) > 0
+                        % Update the pixel value based on the gradient
+                        output_image(i,j,c) = output_image(i,j,c) - lambda * (gradient_x(i,j,c) + gradient_y(i,j,c));
+                    end
+                end
+            end
         end
     end
 
     % Convert the output image back to uint8
-    output_image = uint8(output_image);
+    output_image = uint8(min(max(output_image, 0), 255));
 end
-
-function output_image = noise_removal_min(input_image)
-    input_image = double(input_image);
-    [rows, cols, channels] = size(input_image);
-    kernel_size = 3; % Define the kernel size
-    half_kernel = floor(kernel_size / 2);
-    output_image = zeros(size(input_image));
-
-    for c = 1:channels
-        for i = 1+half_kernel : rows-half_kernel
-            for j = 1+half_kernel : cols-half_kernel
-                % Extract the neighborhood
-                neighborhood = input_image(i-half_kernel:i+half_kernel, j-half_kernel:j+half_kernel, c);
-                % Apply the minimum filter
-                output_image(i, j, c) = min(neighborhood(:));
-            end
-        end
-    end
-    output_image = uint8(output_image);
-end
-
 
 % Apply Filters
 output_mean = noise_removal_mean(input_image);
@@ -351,10 +396,8 @@ output_adaptive = adaptive_median_filter(input_image, 7);
 output_lee = lee_filter(input_image, 5);
 output_alpha_trimmed = alpha_trimmed_mean_filter(input_image, 0.2);
 output_nlm = non_local_means_filter(input_image, 7, 5, 10);
-output_tv = tv_denoising(input_image, 1, 100);
-output_min = noise_removal_min(input_image); 
-
-
+output_kalman = kalman_filter(input_image, 0.1, 0.5, 7);
+output_tvd = tvd_filter(input_image, 0.1, 50);
 
 % Display the results
 figure;
@@ -368,5 +411,5 @@ subplot(3, 4, 7); imshow(output_adaptive); title('Adaptive Median Filter');
 subplot(3, 4, 8); imshow(output_lee); title('Lee Filter');
 subplot(3, 4, 9); imshow(output_alpha_trimmed); title('Alpha-Trimmed Filter');
 subplot(3, 4, 10); imshow(output_nlm); title('NLM Filter');
-subplot(3, 4, 11); imshow(output_tv); title('TVD Filter');
-subplot(3, 4, 12); imshow(output_min); title('Min Filter');
+subplot(3, 4, 11); imshow(output_tvd); title('TVD Filter');
+subplot(3, 4, 12); imshow(output_kalman); title('Kalman Filter');
