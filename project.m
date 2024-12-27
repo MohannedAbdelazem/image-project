@@ -320,46 +320,25 @@ function output_image = tv_denoising(input_image, lambda, num_iterations)
     output_image = uint8(output_image);
 end
 
-function output_image = kalman_filter(input_image, process_noise, measurement_noise)
+function output_image = noise_removal_min(input_image)
     input_image = double(input_image);
     [rows, cols, channels] = size(input_image);
+    kernel_size = 3; % Define the kernel size
+    half_kernel = floor(kernel_size / 2);
+    output_image = zeros(size(input_image));
 
-    % Initialize the output image (starting with the noisy image)
-    output_image = input_image;
-
-    % Kalman filter parameters (initial state estimates)
-    estimate = input_image;  % initial estimate is the noisy image
-    error_covariance = ones(rows, cols, channels);  % initial error covariance
-
-    % Kalman filter loop (per pixel and per channel)
-    for iter = 1:5  % Number of iterations (can be adjusted)
-        for c = 1:channels
-            for i = 1:rows
-                for j = 1:cols
-                    % Prediction step: predict next state (no change since it's a static image)
-                    predicted_estimate = estimate(i, j, c);
-                    predicted_covariance = error_covariance(i, j, c) + process_noise;
-
-                    % Measurement step: observe the noisy image pixel value
-                    measured_value = input_image(i, j, c);
-
-                    % Kalman gain: this determines how much the prediction should be updated
-                    kalman_gain = predicted_covariance / (predicted_covariance + measurement_noise);
-
-                    % Update step: update the estimate with the new measurement
-                    estimate(i, j, c) = predicted_estimate + kalman_gain * (measured_value - predicted_estimate);
-
-                    % Update the error covariance
-                    error_covariance(i, j, c) = (1 - kalman_gain) * predicted_covariance;
-                end
+    for c = 1:channels
+        for i = 1+half_kernel : rows-half_kernel
+            for j = 1+half_kernel : cols-half_kernel
+                % Extract the neighborhood
+                neighborhood = input_image(i-half_kernel:i+half_kernel, j-half_kernel:j+half_kernel, c);
+                % Apply the minimum filter
+                output_image(i, j, c) = min(neighborhood(:));
             end
         end
     end
-
-    % Convert the output image back to uint8
-    output_image = uint8(estimate);
+    output_image = uint8(output_image);
 end
-
 
 
 % Apply Filters
@@ -373,7 +352,7 @@ output_lee = lee_filter(input_image, 5);
 output_alpha_trimmed = alpha_trimmed_mean_filter(input_image, 0.2);
 output_nlm = non_local_means_filter(input_image, 7, 5, 10);
 output_tv = tv_denoising(input_image, 1, 100);
-output_kalman = kalman_filter(input_image, 0.1, 0.5);
+output_min = noise_removal_min(input_image); 
 
 
 
@@ -390,4 +369,4 @@ subplot(3, 4, 8); imshow(output_lee); title('Lee Filter');
 subplot(3, 4, 9); imshow(output_alpha_trimmed); title('Alpha-Trimmed Filter');
 subplot(3, 4, 10); imshow(output_nlm); title('NLM Filter');
 subplot(3, 4, 11); imshow(output_tv); title('TVD Filter');
-subplot(3, 4, 12); imshow(output_kalman); title('Kalman Filter');
+subplot(3, 4, 12); imshow(output_min); title('Min Filter');
